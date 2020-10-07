@@ -197,19 +197,19 @@ def create_transform(name, param_dict):
     return trans_func
 
 
-def transform_pipeline_from_dict(transform_dict):
-    ''' creates transfrom pipeline from dict
+def transform_pipeline_from_dict(transform_list):
+    ''' creates transfrom pipeline from list
     
         Example:
-          {
-            'RandomRotation': {
+          [
+            ('RandomRotation', {
                     'degrees': 5
-            },
-            'RandomCrop': {
+            }),
+            ('RandomCrop', {
                     'size': (480,480)
-            },
-            'ToTensor': {}
-          }
+            }),
+            ('ToTensor', {})
+          ]
     '''    
-    transform_objects = [create_transform(k, v) for k, v in transform_dict.items()]
+    transform_objects = [create_transform(k, v) for k, v in transform_list]
     return torchvision.transforms.Compose(transform_objects)
