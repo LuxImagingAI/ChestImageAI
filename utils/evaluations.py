@@ -7,14 +7,17 @@ def batch_prediction(model, loader, max_batch=-1, tta_ensemble = 1, device=None)
     
     model.eval()
     device = device or torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
     ensemble, targets = [], []
     for i in range(tta_ensemble):
         preds, targs = [], []
         with torch.no_grad():
-            for i, (x, t) in enumerate(loader):
+            for i, (x, t, m) in enumerate(loader):
                 x, t = x.to(device), t.numpy()
-                logits = model(x)
+                if getattr(model, 'meta_injection', None):
+                    m = m.to(device)
+                    logits = model(x, m)
+                else:
+                    logits = model(x)
                 preds.append(logits.to('cpu').numpy())
                 targs.append(t)
                 if i == max_batch:
@@ -76,16 +79,20 @@ def eval_mcc(model, loader, num_iter=-1):
     return sklearn.metrics.matthews_corrcoef(targets[ignore_index], preds[ignore_index]>0)
 
 
-def eval_crit(model, loader, crit, num_iter=-1):
+def eval_crit(model, loader, crit, num_iter=-1, device=None):
     
     model.eval()
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = device or torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     loss, n_samples = 0, 0
     with torch.no_grad():
-        for i, (x, y) in enumerate(loader):
+        for i, (x, y, m) in enumerate(loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            logits = model(x)
+            if getattr(model, 'meta_injection', None):
+                m = m.to(device)
+                logits = model(x, m)
+            else:
+                logits = model(x)
             l, n = crit(logits, y)
             loss += l.cpu().numpy()
             n_samples += n.cpu().numpy()
