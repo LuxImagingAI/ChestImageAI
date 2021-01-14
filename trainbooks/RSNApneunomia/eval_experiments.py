@@ -31,11 +31,13 @@ folder = glob.glob('/home/users/jsoelter/models/rsna/bitm/new_exp/*')
 
 # +
 to_eval = []
+last = []
 
 for f in folder:
     cp = glob.glob(os.path.join(f, '*.pt'))
     if len(cp) == 0:
         print(f'Warning: {f}')
+        #shutil.rmtree(f)
         continue
     cp = np.sort(cp)
     last_cp = cp[-1]
@@ -43,7 +45,9 @@ for f in folder:
     for old in previous_cp:
         print('remove', old)
         #os.remove(old)
-    print('keep', last_cp)
+    #print('keep', last_cp)
+    
+    last.append(int(last_cp.split('step')[1].split('.')[0]))
     to_eval.append(last_cp)
 # -
 
@@ -83,6 +87,6 @@ for cp in to_eval:
 
 
 
-1+1
+
 
 

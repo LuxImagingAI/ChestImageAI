@@ -46,10 +46,10 @@ import data_loader, evaluations, model_setup, sacred
 # ### Model Setup
 
 # + tags=["parameters"]
-#model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/mixed_15000_1_5_it0/step00464.pt'#
-model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/mixed_15000_2_4_it0_mf/step00468.pt'
+model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/mixed_15000_1_5_it0/step00464.pt'##
+#model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/test2/step00464.pt'
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # +
 dirname = os.path.dirname(model_checkpoint)
@@ -244,14 +244,10 @@ fig.savefig(os.path.join(dirname, 'auc.png'))
 
 train_sampling = ledger['train_setup']['0']['setup']['sampling_config']
 
-# +
 all_scores['max_samples'] = train_sampling['max_samples']
 all_scores['frac_meta1_tar1'] = round(train_sampling['frac_meta1_tar1'],1)
 all_scores['frac_meta0_tar1'] = round(train_sampling['frac_meta0_tar1'],1)
 all_scores['frac_meta0'] = round(train_sampling['frac_meta0'],1)
-
-
-# -
 
 all_scores
 
@@ -313,7 +309,6 @@ import gradcam
 #gradcam_model = gradcam.GradCAM(model, model._modules['head']._modules['relu'])
 #gradcam_model = gradcam.GradCAM(model, model._modules['features']._modules['norm5'])
 
-# +
 def explain(image_ids):
     for i in image_ids:
         plt.figure(figsize=(20, 4.5))
@@ -335,9 +330,7 @@ def explain(image_ids):
         heatmap, result = gradcam.utils.visualize_cam(mask, img[0])
         plt.imshow((result.T.numpy().swapaxes(0,1)+1)/2) #, cmap=plt.cm.bone)
         plt.axis('off')
-        
-        
-# -
+
 
 def gradcam_analysis(valid_data, i):  
     plt.figure(figsize=(20, 4.5))

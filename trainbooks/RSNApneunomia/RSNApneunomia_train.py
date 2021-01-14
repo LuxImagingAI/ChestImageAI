@@ -136,7 +136,7 @@ p.sampling_config = dict(
 
 sampling_config2 = p.sampling_config.copy()
 sampling_config2['frac_meta0'] = 0.5
-sampling_config2['frac_meta0_tar1'] = 0.
+sampling_config2['frac_meta0_tar1'] = 0.2
 sampling_config2['frac_meta1_tar1'] = 0.2
 
 p.sampling_config2 = sampling_config2
