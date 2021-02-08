@@ -1,6 +1,7 @@
 import sys, os, json, glob
 import numpy as np
 import torchvision, torch
+import timm
 
 from collections import OrderedDict
 from torch import nn
@@ -25,14 +26,55 @@ class ResNetV2_FeatExtractor(ResNetV2):
     def load_from(self, weights, prefix='resnet/'):
         with torch.no_grad():
             self.root.conv.weight.copy_(tf2th(weights[f'{prefix}root_block/standardized_conv2d/kernel']))  # pylint: disable=line-too-long
-            self.head.gn.weight.copy_(tf2th(weights[f'{prefix}group_norm/gamma']))
-            self.head.gn.bias.copy_(tf2th(weights[f'{prefix}group_norm/beta']))
+            self.pre_head.gn.weight.copy_(tf2th(weights[f'{prefix}group_norm/gamma']))
+            self.pre_head.gn.bias.copy_(tf2th(weights[f'{prefix}group_norm/beta']))
 
             for bname, block in self.body.named_children():
                 for uname, unit in block.named_children():
                     unit.load_from(weights, prefix=f'{prefix}{bname}/{uname}/')
-                    
+
+
+class RegionalAttentionHead(torch.nn.Module):
+    """ Regional attention Layer"""
     
+    def __init__(self, in_channel, n_heads):
+        super(RegionalAttentionHead, self).__init__()
+        self.channel_in = in_channel
+        self.n_heads = n_heads
+        
+        self.attention = torch.nn.Conv2d(in_channels = in_channel , out_channels = n_heads , kernel_size= 1)
+        self.softmax  = torch.nn.Softmax(dim=-1)
+        
+        self._reset_parameters()
+
+        
+    def forward(self,x):
+        """
+            inputs :
+                x : input feature maps (B X C X W X H)
+            returns :
+                out : self attention value + input feature 
+                attention: B X H X C (H heads)
+        """
+        
+        n_batch, n_channel, width, height = x.size()
+        n_spatial = width*height
+        
+        attention_logits = self.attention(x)
+        attention = self.softmax(attention_logits.view(n_batch, self.n_heads, n_spatial))
+        
+        # b:batch, h:n_heads, s:spatial(H*W), channel
+        out = torch.einsum('bhs,bcs->bhc', attention, x.view(n_batch, n_channel, n_spatial))
+        
+        return out #, attention
+    
+    
+    def _reset_parameters(self):
+
+        torch.nn.init.xavier_uniform_(self.attention.weight)
+        self.attention.bias.data.fill_(0.01)
+        
+                 
 class BiT_MetaMixin(torch.nn.Module):
     
     def __init__(self, num_meta_data, backbone):
@@ -92,16 +134,45 @@ def load_pretrained(model, pretrained, head_name, fresh_head_weights):
     print(f'Loaded pretraining weights from {pretrained}')
 
     
-def instantiate_model(architecture, num_classes, pretrained='imagenet', fresh_head_weights=False, num_meta=0):
+def instantiate_model(architecture, num_classes, pretrained='imagenet', fresh_head_weights=False, num_meta=0, num_heads=0):
 
-    if architecture == 'densenet121':
+    if architecture.startswith('attpool'):
+        backbone = architecture.replace('attpool-', '')
+        model = timm.create_model(backbone, pretrained = (pretrained=='imagenet'), num_classes=0, global_pool='')
+        if 'tf_efficientnet_b' in backbone:
+            n_channels = model.bn2.num_features
+            head_name = 'classifier'
+        else:
+            n_channels = model.feature_info[-1]['num_chs']
+            head_name = 'fc'
+        model.global_pool = RegionalAttentionHead(n_channels, num_heads)
+        setattr(model, head_name, torch.nn.Linear(n_channels, num_classes))
+        if fresh_head_weights:
+            torch.nn.init.zeros_(getattr(model, head_name).weight)
+            torch.nn.init.zeros_(getattr(model, head_name).bias)
+        if pretrained and pretrained != 'imagenet':
+            load_pretrained(model, pretrained, head_name, fresh_head_weights)
+    
+    elif architecture.startswith('timm-'):
+        backbone = architecture.replace('timm-', '')
+        model = timm.create_model(backbone, pretrained = (pretrained=='imagenet'), num_classes=num_classes)
+        head_name = 'fc'
+        if pretrained and pretrained != 'imagenet':
+            load_pretrained(model, pretrained, head_name, fresh_head_weights)
+        
+    elif architecture == 'densenet121':
         model = torchvision.models.densenet121(pretrained= (pretrained == 'imagenet'))
         model.classifier = torch.nn.Linear(1024, num_classes)
         if pretrained and (pretrained != 'imagenet'):
             head_name = 'classifier'
             load_pretrained(model, pretrained, head_name, fresh_head_weights)
-                
-    if architecture.startswith('BiT-'):
+    elif architecture == 'resnet18':
+        model = torchvision.models.resnet18(pretrained= (pretrained == 'imagenet'))
+        model.fc = torch.nn.Linear(512, num_classes)
+        if pretrained and (pretrained != 'imagenet'):
+            head_name = 'fc'
+            load_pretrained(model, pretrained, head_name, fresh_head_weights)     
+    elif architecture.startswith('BiT-'):
         print('BIT')
         assert num_meta == 0
         model = BiTModels[architecture](head_size=num_classes, zero_head=True)
@@ -162,6 +233,5 @@ class maskedBCE():
             loss = torch.tensor(0).to(y.device)
 
         return loss, mask.sum()
-
-
     
+   

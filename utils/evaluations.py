@@ -95,7 +95,8 @@ def eval_crit(model, loader, crit, num_iter=-1, device=None):
                 logits = model(x)
             l, n = crit(logits, y)
             loss += l.cpu().numpy()
-            n_samples += n.cpu().numpy()
+            #if type(n) != int: n = n.cpu().numpy()
+            n_samples += n
             if i == num_iter:
                 break
 

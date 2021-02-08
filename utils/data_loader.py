@@ -184,9 +184,9 @@ class RSNAPneumoniaData(Dataset):
 
         ):
         
-        self.meta_fields = {'ViewPosition': 'AP/PA', 'PatientSex': 'Sex', 'PatientAge': 'Age'}
+        self.meta_fields = {}
         self.meta_mapping = {
-            'Sex': {'M': 0, 'F': 1},
+            'Sex': {'M': -1, 'F': 1},
             'AP/PA': {'AP': 0, 'PA': 1}
         }
         self.transform = transform
@@ -218,7 +218,7 @@ class RSNAPneumoniaData(Dataset):
         
         for meta in self.meta_fields.values():
             if meta not in meta_df.columns:
-                meta_df[meta] = -1
+                meta_df[meta] = np.nan
         for col, mapping in self.meta_mapping.items():
             meta_df[col] = meta_df[col].map(mapping)
                 
@@ -254,6 +254,123 @@ class RSNAPneumoniaData(Dataset):
     def __len__(self):
         return len(self.meta_df)
 
+
+
+class BrixiaData(Dataset):
+    
+    def __init__(self,
+            meta_csv = 'metadata_global_v1_extra.csv', # file to load
+            datapath = '/work/projects/covid19_dv/raw_data/brixia',
+            subset = {}, # Define subsetting of data
+            include_meta = [], # meta-data to include in targets
+            include_meta_features  = [],
+            transform = None,
+            deterministic_transform = None,
+            cache = None,
+            equalize = 'hist_cv',
+            test = False,
+            global_score = False,
+            val_conf = {
+                'salt': '42',
+                'fraction': 0.05,
+            },
+            validation = False
+        ):
+        
+        self.meta_mapping = {
+            'Sex': {'M': -1, 'F': 1},
+            'AP/PA': {'AP': 0, 'PA': 1}
+        }
+        
+        self.datapath = datapath
+        self.transform = transform
+        self.equalize = equalize
+        self.include_meta_features = include_meta_features
+        self.deterministic_transform = deterministic_transform
+        self.cache = cache
+        
+        meta_df = pd.read_csv(os.path.join(datapath, meta_csv))
+        if test is not None:
+            meta_df = meta_df[meta_df.ConsensusTestset == int(test)]
+
+        meta_df['Path'] = meta_df.Filename.apply(lambda x: os.path.join(datapath, 'dicom_clean', x))
+        
+        # Train-Validation Split
+        if val_conf:
+            meta_df['val'] = meta_df.Subject.apply(lambda x: hash_sample(val_conf['salt'] + x, val_conf['fraction']))
+            meta_df = meta_df[meta_df.val] if validation else meta_df[np.logical_not(meta_df.val)]
+        
+        # Subset the data
+        m = meta_df.Path.notnull()
+        for k,v in subset.items():
+            m &= meta_df[k].isin(v)
+        print(f'Removed {sum(np.logical_not(m))} entries')
+        meta_df = meta_df[m].reset_index().drop(columns='index')
+        
+        self.meta_df = meta_df
+        self.include_meta = include_meta
+        self.global_score = global_score
+        
+        
+    def preload(self, base_cache_folder=None):
+        
+        if base_cache_folder:
+            setup = hashlib.md5(str(self.deterministic_transform).encode('utf-8')).hexdigest()
+            cache_folder = os.path.join(base_cache_folder, setup)
+            if not os.path.exists(cache_folder): os.makedirs(cache_folder)
+        
+        for ix, fname in enumerate(self.meta_df.Filename):
+            cache_file = os.path.join(cache_folder, fname) if base_cache_folder else None
+            if cache_file and os.path.exists(cache_file):
+                    self.cache[ix] = torch.load(cache_file)
+            else:    
+                _ = self[ix]
+                if base_cache_folder:
+                    torch.save(self.cache[ix], cache_file)
+            if ix%100 == 0: print('X', end='')        
+    
+
+    def __getitem__(self, ix):
+                    
+        if self.global_score:
+            labels = [self.meta_df.loc[ix].BrixiaScoreGlobal]
+        else:
+            labels = self.meta_df.loc[ix].BrixiaScore
+            labels = [int(i) for i in f'{labels:06d}']
+        labels += self.meta_df.loc[ix, self.include_meta].to_list()
+        labels = np.array(labels).astype('float32')
+        
+        if self.include_meta_features:
+            meta_features = self.meta_df.loc[ix, self.include_meta_features].to_list()
+            meta_features = np.array(meta_features).astype('float32')
+        else:
+            meta_features = np.array(np.nan).astype('float32')
+        
+        if (self.cache is None) or (ix not in self.cache):
+            # No caching at all or not yet cached
+            dcm = pydicom.dcmread(os.path.join(self.datapath, 'dicom_clean', self.meta_df.loc[ix, 'Filename']))
+            image = dcm.pixel_array
+            if self.equalize == 'hist_cv':
+                image = equalize_cv(image, dcm.BitsStored, dcm.PhotometricInterpretation)
+            else:
+                image = convert(image,  dcm.PhotometricInterpretation)
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            if self.deterministic_transform:
+                image = self.deterministic_transform(image)
+            if self.cache is not None:
+                self.cache[ix] = image
+        else: # cached data
+            image = self.cache[ix]
+            
+        if self.transform:
+            image = self.transform(image)
+        
+        return image, labels, meta_features
+    
+    
+    def __len__(self):
+        return len(self.meta_df)
+
     
 # -------------------- utils -----------------------------------------------------------------------
 
@@ -280,6 +397,15 @@ def equalize_cv(img, bit= 16, photometric_interpretation=None):
     return img_new
 
 
+def convert(img, photometric_interpretation=None):
+    
+    img_new = (255*(img/img.max())).astype('uint8')
+    if photometric_interpretation == 'MONOCHROME1':
+        img_new = 255 - img_new
+    
+    return img_new
+
+
 def create_transform(name, param_dict):
     ''' creates transform object from name and parameter dict 
     
@@ -295,7 +421,7 @@ def create_transform(name, param_dict):
     return trans_func
 
 
-def transform_pipeline_from_dict(transform_list):
+def transform_pipeline_from_list(transform_list):
     """ creates transfrom pipeline from list
     
         Example:
@@ -311,6 +437,18 @@ def transform_pipeline_from_dict(transform_list):
     """    
     transform_objects = [create_transform(k, v) for k, v in transform_list]
     return torchvision.transforms.Compose(transform_objects)
+
+
+def transform_pipeline_from_listdict(transform_listdict, keys):
+    """ creates transfrom pipeline from all keys in dict"""    
+    transform_objects = []
+    for k in keys:
+        transform_objects.extend([create_transform(k2, v) for k2, v in transform_listdict[k]])
+    return torchvision.transforms.Compose(transform_objects)
+
+
+def transform_pipeline_from_dict(transform_list):
+    return transform_pipeline_from_list(transform_list)
 
 
 def hash_sample(id_string, fraction=0.5, resolution=100):
