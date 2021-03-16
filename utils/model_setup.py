@@ -1,7 +1,7 @@
 import sys, os, json, glob
 import numpy as np
 import torchvision, torch
-import timm
+import timm, monai
 
 from collections import OrderedDict
 from torch import nn
@@ -134,9 +134,13 @@ def load_pretrained(model, pretrained, head_name, fresh_head_weights):
     print(f'Loaded pretraining weights from {pretrained}')
 
     
-def instantiate_model(architecture, num_classes, pretrained='imagenet', fresh_head_weights=False, num_meta=0, num_heads=0):
+def instantiate_model(architecture, num_classes, pretrained='imagenet', fresh_head_weights=False, num_meta=0, num_heads=0, param={}):
 
-    if architecture.startswith('attpool'):
+    if architecture == 'monai_unet':
+        model = monai.networks.nets.BasicUNet(dimensions=2, in_channels=1, out_channels=num_classes, **param)
+        if pretrained != 'imagenet':
+            load_pretrained(model, pretrained, 'blabla', fresh_head_weights)
+    elif architecture.startswith('attpool'):
         backbone = architecture.replace('attpool-', '')
         model = timm.create_model(backbone, pretrained = (pretrained=='imagenet'), num_classes=0, global_pool='')
         if 'tf_efficientnet_b' in backbone:

@@ -27,7 +27,7 @@ import collections
 import numpy as np
 # -
 
-folder = glob.glob('/home/users/jsoelter/models/rsna/bitm/new_exp/*')
+folder = glob.glob('/home/users/jsoelter/models/rsna/bitm/new_exp/*_it?')
 
 # +
 to_eval = []
@@ -50,6 +50,8 @@ for f in folder:
     last.append(int(last_cp.split('step')[1].split('.')[0]))
     to_eval.append(last_cp)
 # -
+
+to_eval
 
 eval_notebook = './RSNApneunomia_eval.ipynb'
 
@@ -85,8 +87,10 @@ for cp in to_eval:
             print('*', end='')
             time.sleep(60)
 
+v
 
 
 
+not(v.is_alive())
 
 

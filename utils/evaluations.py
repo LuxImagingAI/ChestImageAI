@@ -101,3 +101,23 @@ def eval_crit(model, loader, crit, num_iter=-1, device=None):
                 break
 
     return loss / n_samples
+
+
+def eval_critd(model, loader, crit, num_iter=-1, device=None):
+    
+    model.eval()
+    device = device or torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    loss, n_samples = 0, 0
+    with torch.no_grad():
+        for i, data in enumerate(loader):
+            x, y = data['image'].type(torch.FloatTensor).to(device, non_blocking=True), data['mask'].to(device, non_blocking=True)
+            logits = model(x)
+            l, n = crit(logits, y)
+            loss += l.cpu().numpy()
+            #if type(n) != int: n = n.cpu().numpy()
+            n_samples += n
+            if i == num_iter:
+                break
+
+    return loss / n_samples

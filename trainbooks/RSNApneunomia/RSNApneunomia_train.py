@@ -99,8 +99,12 @@ p.data_setup = dict(
     data =  dict(
         include_meta = [],
         #subset = {'Sex': ['M']}
-        include_meta_features = [] #['Sex'],
+        include_meta_features = [], #['Sex'],
         #include_meta = ['Sex', 'AP/PA', 'Frontal/Lateral'],
+        val_conf = {
+                'salt': '42',
+                'fraction': 0.05,
+            }
     ),
     transforms = [
         ('ToPILImage', {}),
@@ -190,8 +194,6 @@ p.opt = {
     )
 }
 
-#optim = torch.optim.SGD(model.parameters(), lr=0.003, momentum=0.9)
-#optim = torch.optim.SGD([p for n,p in model.named_parameters() if 'head' in n], lr=0.003, momentum=0.9)
 optim = getattr(torch.optim, p.opt['class'])(model.parameters(), **p.opt['param'])
 if  checkpoint is not None:
     optim.load_state_dict(checkpoint["optim"])
@@ -221,7 +223,7 @@ print(f'Crit: {evaluations.eval_crit(model, valid_loader, crit, device=device):.
 
 # ### Training Loop
 
-eval_intervall = 10
+eval_intervall = 20
 save_intervall = 500#steps_per_epoch
 
 # +
@@ -280,15 +282,19 @@ while lr:
             if (step % eval_intervall) == 0:
                 preds, targets = evaluations.batch_prediction(model, valid_loader, device=device)
                 auc_selection = evaluations.eval_auc(preds.reshape((-1,1)), targets)
+                preds, targets = evaluations.batch_prediction(model, valid_loader2, device=device)
+                auc_selection2 = evaluations.eval_auc(preds.reshape((-1,1)), targets)
                 val = evaluations.eval_crit(model, valid_loader, crit, device=device)
                 ledger['internal'].append((step-1, val))
-                print(f'step {step} ->, train: {train_loss:.3f}, val: {val:.3f}, auc: {auc_selection:.3f}') # FULL: 
+                ledger['val_auc'].append((step-1, auc_selection, auc_selection2))
+
+                print(f'step {step} ->, train: {train_loss:.3f},  auc: {auc_selection:.3f}, auc2: {auc_selection2:.3f}') # FULL: 
 
             if (step % save_intervall) == 0:
                 torch.save({
                         "step": step,
                         "model": model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
-                        "optim" : optim.state_dict(),
+                        "optim": optim.state_dict(),
                     }, 
                     os.path.join(p.computation['model_out'], f'step{step:05d}.pt')
                 )

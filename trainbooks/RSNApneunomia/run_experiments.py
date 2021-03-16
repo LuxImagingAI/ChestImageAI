@@ -26,32 +26,37 @@ import collections
 # -
 
 #available_gpu = torch.cuda.device_count()
-available_gpu = [0]#range(4)
+available_gpu = range(1,4)
 processes = {k: None for k in available_gpu}
 
-Experiment = collections.namedtuple('Experiment', ['frac_meta0', 'frac_meta0_tar1', 'frac_meta1_tar1', 'max_samples', 'name'])
+Experiment = collections.namedtuple('Experiment', ['frac_meta0', 'frac_meta0_tar1', 'frac_meta1_tar1', 'max_samples', 'name', 'fold'])
 
 # +
+name_extra = ''#'_mf'
 experiments = []
 
-for iteration in range(0,5):
-    for frac_meta1_tar1 in [0.1, 0.2, 0.3, 0.4, 0.5]:
-        experiments.append(Experiment(
-            frac_meta0=0, 
-            frac_meta0_tar1=frac_meta1_tar1, 
-            frac_meta1_tar1=frac_meta1_tar1, 
-            max_samples=7500,
-            name = f'pure_7500_None_{int(frac_meta1_tar1*10):d}_it{iteration:d}'
-        ))
+for fold in range(0,5):
+    
+    if True:
+        for frac_meta1_tar1 in [0.1, 0.2, 0.3, 0.4, 0.5]:
+            experiments.append(Experiment(
+                frac_meta0=0, 
+                frac_meta0_tar1=frac_meta1_tar1, 
+                frac_meta1_tar1=frac_meta1_tar1, 
+                max_samples=7500,
+                name = f'pure_7500_None_{int(frac_meta1_tar1*10):d}_it{fold:d}'+name_extra,
+                fold = fold
+            ))
 
-    for frac_meta1_tar1 in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
-        experiments.append(Experiment(
-            frac_meta0=0.5, 
-            frac_meta0_tar1=frac_meta1_tar1, 
-            frac_meta1_tar1=frac_meta1_tar1, 
-            max_samples=7500,
-            name = f'mixed_7500_{int(frac_meta1_tar1*10):d}_{int(frac_meta1_tar1*10):d}_it{iteration:d}'
-        ))
+        for frac_meta1_tar1 in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
+            experiments.append(Experiment(
+                frac_meta0=0.5, 
+                frac_meta0_tar1=frac_meta1_tar1, 
+                frac_meta1_tar1=frac_meta1_tar1, 
+                max_samples=7500,
+                name = f'mixed_7500_{int(frac_meta1_tar1*10):d}_{int(frac_meta1_tar1*10):d}_it{fold:d}'+name_extra,
+                fold = fold
+            ))
 
     for frac_meta1_tar1 in [0.1, 0.2, 0.3, 0.4, 0.5]:
         experiments.append(Experiment(
@@ -59,31 +64,35 @@ for iteration in range(0,5):
             frac_meta0_tar1=frac_meta1_tar1, 
             frac_meta1_tar1=frac_meta1_tar1, 
             max_samples=15000,
-            name = f'mixed_15000_{int(round(frac_meta1_tar1*10)):d}_{int(round(frac_meta1_tar1*10)):d}_it{iteration:d}'
+            name = f'mixed_15000_{int(round(frac_meta1_tar1*10)):d}_{int(round(frac_meta1_tar1*10)):d}_it{fold:d}'+name_extra,
+            fold = fold
         ))
 
-    for frac_meta1_tar1 in [0., 0.1, 0.3, 0.4]:
+    for frac_meta1_tar1 in [0., 0.1, 0.2, 0.3, 0.4]:
         experiments.append(Experiment(
             frac_meta0=0.5, 
             frac_meta0_tar1=0.4-frac_meta1_tar1, 
             frac_meta1_tar1=frac_meta1_tar1, 
             max_samples=15000,
-            name = f'mixed_15000_{int(round((0.4-frac_meta1_tar1)*10)):d}_{int(round(frac_meta1_tar1*10)):d}_it{iteration:d}'
+            name = f'mixed_15000_{int(round((0.4-frac_meta1_tar1)*10)):d}_{int(round(frac_meta1_tar1*10)):d}_it{fold:d}'+name_extra,
+            fold = fold 
         ))
 
-    for frac_meta1_tar1 in [0, 0.1, 0.2, 0.4, 0.5, 0.6]:
+    for frac_meta1_tar1 in [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]:
         experiments.append(Experiment(
             frac_meta0=0.5, 
             frac_meta0_tar1=0.6-frac_meta1_tar1, 
             frac_meta1_tar1=frac_meta1_tar1, 
             max_samples=15000,
-            name = f'mixed_15000_{int(round((0.6-frac_meta1_tar1)*10)):d}_{int(round(frac_meta1_tar1*10)):d}_it{iteration:d}'
+            name = f'mixed_15000_{int(round((0.6-frac_meta1_tar1)*10)):d}_{int(round(frac_meta1_tar1*10)):d}_it{fold:d}'+name_extra,
+            fold = fold
         ))
 # -
 
 train_notebook = './RSNApneunomia_train.ipynb'
 
 out_folder = '/home/users/jsoelter/models/rsna/bitm/new_exp/'
+
 for experiment in experiments:
     
     #gpu_id = fold%available_gpu
@@ -99,7 +108,18 @@ for experiment in experiments:
         'computation': {
             'model_out': os.path.join(out_folder, experiment.name),
             'device': None
-        }
+        },
+        'data_setup': {
+            'data': {
+                #'include_meta_features': ['Sex'],
+                'val_conf': {
+                    'salt': str(experiment.fold),
+                    'fraction': 0.05
+        }}},
+        #'model_dict':  dict(
+        #    architecture = 'BiTX-M-R50x3',
+        #    num_meta = 1
+        #)
     }}
     output_path = param['overwrites']['computation']['model_out']
     output_file = os.path.join(output_path, 'runbook.ipynb')
@@ -123,5 +143,21 @@ for experiment in experiments:
         if not(proc_started):
             print('*', end='')
             time.sleep(5*60)
+
+# +
+import glob
+import shutil
+
+folder = [i.split('/')[-1] for i in glob.glob(out_folder + '*')]
+wt_ledger = [i.split('/')[-2] for i in glob.glob(out_folder + '*/*.json')]
+# -
+
+incomplete = set(folder).difference(wt_ledger)
+incomplete
+
+for f in incomplete:
+    shutil.rmtree(os.path.join(out_folder, f))
+
+
 
 
