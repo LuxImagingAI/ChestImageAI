@@ -87,8 +87,96 @@ class ChexpertData(Dataset):
     
     def __len__(self):
         return len(self.meta_df)
+
+
+class BIMCVPneumoniaData(Dataset):
+    
+    def __init__(self,
+            meta_csv = '/work/projects/covid19_dv/raw_data/bimcv/datasets/pneunomia_xray.csv', # file to load
+            subset = {# Define subsetting of data
+                'AP/PA': ['vp-pa','vp-ap']
+            }, 
+            sub_sampling = {},
+            include_meta = [], # meta-data to include in targets
+            include_meta_features  = [],
+            transform = None,
+            equalize = 'hist_cv',
+            val_conf = {
+                'salt': '42',
+                'fraction': 0.05,
+            },
+            validation = False
+        ):
+        
+        self.meta_fields = {}
+        
+        self.meta_mapping = {
+            'Sex': {'M': -1, 'F': 1},
+            'AP/PA': {'vp-ap': 0, 'vp-pa': 1}
+        }
+        self.transform = transform
+        self.equalize = equalize
+        
+        meta_df = pd.read_csv(meta_csv)
+        meta_df = meta_df.rename(columns={'pneumonia': 'Target', 'path': 'Path', 'view': 'AP/PA', 'gender': 'Sex', 
+                                          'modality':'Modality', 'sub': 'patientId'})
+                
+        # Subset the data
+        m = meta_df.Path.notnull()
+        for k,v in subset.items():
+            m &= meta_df[k].isin(v)
+        print(f'Removed {sum(np.logical_not(m))} entries')
+        meta_df = meta_df[m]
+        
+        # Train-Validation Split
+        if val_conf:
+            meta_df['val'] = meta_df.patientId.apply(lambda x: hash_sample(val_conf['salt'] + x, val_conf['fraction']))
+            meta_df = meta_df[meta_df.val] if validation else meta_df[np.logical_not(meta_df.val)]
+        
+        # Subsample the data
+        if sub_sampling:
+            meta_df = add_sample_factor(meta_df, **sub_sampling)
+            meta_df['selection'] = meta_df.apply(lambda x: hash_sample('saltSampling' + x['patientId'], x['sampling_factor']), axis=1)
+            meta_df = meta_df[meta_df.selection]
+        
+        for meta in self.meta_fields.values():
+            if meta not in meta_df.columns:
+                meta_df[meta] = np.nan
+        for col, mapping in self.meta_mapping.items():
+            meta_df[col] = meta_df[col].map(mapping)
+                
+        self.meta_df = meta_df.reset_index().drop(columns=['index'])
+        self.include_meta = include_meta                    
+        self.include_meta_features = include_meta_features
+        
+    
+    def __getitem__(self, ix):
+        
+        row = self.meta_df.iloc[ix]
+        labels = self.meta_df.loc[ix, ['Target'] + self.include_meta].to_list()
+        labels = np.array(labels).astype('float32')
+        
+        if self.include_meta_features:
+            meta_features = self.meta_df.loc[ix, self.include_meta_features].to_list()
+            #meta_features = np.array(meta_features).astype('float32')
+        else:
+            meta_features = np.array(np.nan).astype('float32')
+            
+        image = cv2.imread(row.Path, 0) #read Grayscale to CWH
+        if self.equalize == 'hist_cv':
+            image = equalize_cv(image, row.BitsStored, row.PhotometricInterpretation)
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        
+        if self.transform:
+            image = self.transform(image)
+            
+        return image, labels, meta_features
     
     
+    def __len__(self):
+        return len(self.meta_df)
+
+
 class BIMCVCovid(Dataset):
     
     def __init__(self,

@@ -126,6 +126,8 @@ p.data_setup = {
 }}
 p.sampling_config = copy.deepcopy(p_pretrain.sampling_config)
 
+p.data_setup
+
 # #### Y-independent data
 
 p.data_setup['data_y0'] = {
@@ -133,7 +135,8 @@ p.data_setup['data_y0'] = {
     'include_meta_features': ['Sex'],
     'subset': {
         'Target': [0]
-    }
+    },
+    'val_conf': p.data_setup['data']['val_conf'].copy()
 }
 
 # #### Augmentation Pipeline
@@ -316,7 +319,7 @@ while current_epoch < finish_epoch:
     if train_y0_iter.epochs != current_epoch:
         current_epoch = train_y0_iter.epochs
         preds, targets, meta = batch_prediction(deconfounder, test_loader, device=device)
-        auc = evaluations.eval_auc(preds.reshape(-1, 1), targets>0)
+        auc = evaluations.eval_auc(preds.reshape(-1, 1), meta>0)
         print(f'Train: {np.mean(losses):.2f}, AUC: {auc:.3f}')
 # -
 
@@ -403,12 +406,12 @@ alpha = 0.5
 max_steps = 100
 modulo = 1
 
+step = 0
 
 train_setup = ledger.setdefault('train_setup', {})
 train_setup[step] = {
     'setup': p.params,
 }
-
 
 _ = model.train()
 while step < max_steps:
@@ -435,6 +438,10 @@ while step < max_steps:
         preds, targets, meta = batch_prediction(deconfounder, test_loader, device=device)    
         print(f'AUC M vs F: {skm.roc_auc_score(meta>0, preds.reshape(-1, 1)):.3f}')
         print('===================')
+# -
+
+
+
 
 
 # +
