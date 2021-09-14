@@ -42,6 +42,12 @@ def eval_auc(preds, targets, columns=None):
     return sklearn.metrics.roc_auc_score(targets[include], preds[include])
 
 
+def eval_auc_percol(preds, targets):
+    aucs = []
+    for col in range(targets.shape[1]):
+        auc = sklearn.metrics.roc_auc_score(targets[:, col], preds[:, col])
+        aucs.append(auc)
+    return aucs
 
 
 

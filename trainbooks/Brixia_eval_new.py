@@ -14,7 +14,8 @@
 # ---
 
 # +
-import os, glob, json
+import os, glob
+import json_tricks as json
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -35,46 +36,44 @@ import scipy.special
 import seaborn as sns
 import sklearn.metrics as skm
 
+import monai
+
 # +
 import sys
 sys.path.append('/home/users/jsoelter/Code/ChestImageAI/utils/')
 sys.path.append('/home/users/jsoelter/Code/big_transfer/')
 
-import data_loader, evaluations, model_setup, sacred
+import data_loader, evaluations, model_setup, sacred, train_utils
 # -
 
 # ## Model Performance Comparison
 
 # + tags=["parameters"]
 models = [
-    #'/work/projects/covid19_dv/models/brixia/jan/local/att2/',
-    #'/work/projects/covid19_dv/models/brixia/jan/local/att1/',
+  #'/work/projects/covid19_dv/models/brixia/jan/local/att2/',
+  #'/work/projects/covid19_dv/models/brixia/jan/local/att1/',
     #'/work/projects/covid19_dv/models/brixia/jan/local/att3/',
     #'/work/projects/covid19_dv/models/brixia/jan/local/att4/',
     #'/work/projects/covid19_dv/models/brixia/jan/local/att5/',
     #'/work/projects/covid19_dv/models/brixia/jan/local/att6/',
-   #'/work/projects/covid19_dv/models/brixia/jan/local/att7/',    
+  '/work/projects/covid19_dv/models/brixia2/jan/may1',   
     #'/work/projects/covid19_dv/models/brixia/jan/local/att8/',    
     #'/work/projects/covid19_dv/models/brixia/jan/local/att9/',    
     #'/work/projects/covid19_dv/models/brixia/jan/local/att10/',    
     #'/work/projects/covid19_dv/models/brixia/jan/local/att12/',    
 
    #'/work/projects/covid19_dv/models/brixia/jan/global/plain1/',    
-   #'/work/projects/covid19_dv/models/brixia/jan/global/onlyAP/', 
-    '/work/projects/covid19_dv/models/brixia/jan/local/may1',
-    '/work/projects/covid19_dv/models/brixia/jan/local/may1_50pure',
-    '/work/projects/covid19_dv/models/brixia/jan/local/may1_34pure',
+   #'/work/projects/covid19_dv/models/brixia/jan/global/onlyAP/',    
+
+    
 ]
 
-ledgers = {}
 # -
 
 for model in models:
     ledger = json.load(open(os.path.join(model, 'train_ledger.json')))
-    ledgers[model] = ledger
     
-    fig = plt.figure(figsize=(20,8))
-    fig.suptitle(os.path.dirname(model))
+    fig = plt.figure(figsize=(20,8)) 
     gs = matplotlib.gridspec.GridSpec(3,1,height_ratios=(1,4,4), hspace=0)
 
     ax = plt.subplot(gs[0])
@@ -85,38 +84,23 @@ for model in models:
     plt.xlim([0, 4000])
 
     ax = plt.subplot(gs[1])
-    plt.plot(ledger['train_loss'], alpha=0.1) #, np.hstack([np.zeros(99), np.ones(100)/100]), mode = 'same'))
-    plt.plot(np.convolve(ledger['train_loss'], np.hstack([np.zeros(9), np.ones(10)/10]), mode = 'same'), color='b', label='train')
-    plt.plot(*np.array(ledger['internal']).T, 'o-', label='val')
+    plt.plot(ledger['train_loss_BrixiaDataD'], alpha=0.1) #, np.hstack([np.zeros(99), np.ones(100)/100]), mode = 'same'))
+    plt.plot(np.convolve(ledger['train_loss_BrixiaDataD'], np.hstack([np.zeros(9), np.ones(10)/10]), mode = 'same'), color='b', label='train')
+    plt.plot(*np.array([(k, np.mean(v)) for k, v in ledger['validation_BrixiaDataD']]).T, 'o-', label='val')
     #plt.yscale('log')
     plt.legend()
     plt.grid()
     #plt.yscale('log')
     plt.ylabel('cross entropy')
     #plt.xticks([])
-    plt.ylim([2, 7])
-    plt.xlim([0, 4000])
+    #plt.ylim([2, 7])
+    plt.xlim([0, 3000])
 
-
-ledgers.keys()
-
-# +
-#ledgers['/work/projects/covid19_dv/models/brixia/jan/local/att2/']['train_setup']['0']
-# -
-
-ledgers['/work/projects/covid19_dv/models/brixia/jan/local/may1_50pure']['train_setup']['0']
 
 # ## Deeper Model Evaluation
 
 # +
-##model_checkpoint = '/work/projects/covid19_dv/models/brixia/jan/local/att2/step03600.pt'
-#model_checkpoint = '/work/projects/covid19_dv/models/brixia/jan/local/att7/step03000.pt'
-model_checkpoint = '/work/projects/covid19_dv/models/brixia/jan/local/may1/step03000.pt'
-#model_checkpoint = '/work/projects/covid19_dv/models/brixia/jan/local/may1_34pure/step03000.pt'
-
-
-#model_checkpoint = '/work/projects/covid19_dv/models/brixia/jan/global/onlyAP/step03000.pt'
-#model_checkpoint = '/work/projects/covid19_dv/models/brixia/jan/global/plain1/step02000.pt'
+model_checkpoint = '/work/projects/covid19_dv/models/brixia2/jan/may1/step03000.pt'
 device = torch.device("cuda:0")
 
 dirname = os.path.dirname(model_checkpoint)
@@ -125,16 +109,26 @@ ledger = json.load(open(os.path.join(dirname, 'train_ledger.json')))
 
 p = sacred.ParameterStore(defaults=ledger['train_setup']['0']['setup'])
 
+p.transformations
+
 # ### Data Setup
 
-# +
-prepro = data_loader.transform_pipeline_from_dict(p.data_setup['prepro'])
-train_aug = data_loader.transform_pipeline_from_listdict(p.data_setup, ['prepro_dynamic', 'train_aug'])
-test_aug = data_loader.transform_pipeline_from_listdict(p.data_setup, ['prepro_dynamic', 'test_aug'])
+cached_aug = train_utils.transform_pipe_factory(p.transformations, ['cached'], pop_key = ['mask'])
+train_aug = train_utils.transform_pipe_factory(p.transformations, ['train_aug']) #, pop_key = ['mask'])
 
-train_data = data_loader.BrixiaData(transform=train_aug, deterministic_transform=prepro, **p.data_setup['data'], cache={})
-val_data = data_loader.BrixiaData(transform=test_aug, deterministic_transform=prepro, **p.data_setup['data'], cache={}, validation=True)
-val_data_tta = data_loader.BrixiaData(transform=train_aug, deterministic_transform=prepro, **p.data_setup['data'], cache={}, validation=True)
+train_data, val_data = {}, {}
+for class_name, setup in p.datasets.items():
+    
+    transforms = {}
+    if class_name == 'GeneralBlockchainData':
+        transforms['transform'] = train_aug
+        transforms['deterministic_transform'] = cached_aug
+    else:
+        transforms['transform'] = train_aug_nolabel
+        transforms['deterministic_transform'] = cached_aug_nolabel
+
+    train_data[class_name] = train_utils.instantiate_object(class_name=class_name,  validation=False, cache = {}, **setup, **transforms)
+    val_data[class_name] = train_utils.instantiate_object(class_name=class_name, validation=True, cache = {}, **setup, **transforms)
 
 # +
 param = p.data_setup['data'].copy()
@@ -191,8 +185,6 @@ pred_val, target_val = evaluations.batch_prediction(model, valid_loader, device=
 pred_val_tta, target_val_tta = evaluations.batch_prediction(model, valid_loader_tta, tta_ensemble=10, device=device)
 pred_train, target_train = evaluations.batch_prediction(model, train_loader, device=device)
 
-pred_val.shape
-
 # +
 aggregate = 'expectation'
 
@@ -213,17 +205,13 @@ elif aggregate == 'None':
 if is_global:
     mae = np.mean(np.abs(np.round(pred_val_bin)-target_val.squeeze()), 0)
     print(f'Global MAE: {mae:0.2f} (vs. 1.83/1.73)')
-    mae = np.mean(np.abs(np.round(pred_valtta_bin)-target_val.squeeze()), 0)
-    print(f'Global MAE (TTA): {mae:0.2f} (vs. 1.83/1.73)')
 else:
     mae = np.mean(np.abs(np.round(pred_val_bin)-target_val.squeeze()), 0)
     g_mae = np.mean(np.abs(pred_val_bin.sum(-1)-target_val.sum(-1)), 0)
+
     print(f'Global MAE: {g_mae:0.2f} (vs. 1.83/1.73)')
     print(f'Avg. MAE  : {np.mean(mae):0.2f} (vs. 0.47/0.44)\n')
     print(np.round(mae, 2).reshape(2,3).T)
-    print('------')
-
-# #### TTA
 
 if is_global:
     mae = np.mean(np.abs(np.round(pred_valtta_bin)-target_val.squeeze()), 0)
@@ -258,8 +246,6 @@ else:
     print(f'Global corr: {g_c:.2f} (vs. 0.85/0.86)')
     print(f'Avg. corr:   {np.mean(c):.2f} (vs. 0.67/0.71) \n')
     print(np.round(c,2).reshape(2,3).T)
-
-# #### TTA
 
 if is_global:
     g_c = np.corrcoef(pred_valtta_bin, target_val.squeeze())[1,0]
@@ -305,9 +291,9 @@ meta.loc[meta.AcquisitionDeviceProcessingDescription == 'Thorax pa - HC', 'View'
 
 # +
 #k, kv = 'Modality', ['CR', 'DX']
-k, kv = 'View', ['AP', 'PA'] #, 'na']
+#k, kv = 'View', ['AP', 'PA'] #, 'na']
 #k, kv = 'Sex', ['M', 'F']
-#k, kv = 'ManufacturerModelName', ['Fluorospot Compact FD', 'CR 75'] #, 'DRX-REVOLUTION'],
+k, kv = 'ManufacturerModelName', ['Fluorospot Compact FD', 'CR 75'] #, 'DRX-REVOLUTION'],
 
 for v in kv:
     m = meta[k] == v
@@ -367,46 +353,15 @@ consensus_test.MeanGlobal.shape
 pred_test_max = np.argmax(pred_test, -1)
 pred_test_expec = (classp(torch.Tensor(pred_test)) * np.array([0,1,2,3])).sum(-1).numpy()
 
-# +
 #sns.regplot(consensus_test.ModeGlobal, consensus_test.MeanGlobal)
-fig, axes = plt.subplots(1,3,figsize=(20,5))
+sns.regplot(target_test.sum(-1), consensus_test.MeanGlobal, order=3)
+sns.regplot(pred_test_max.sum(-1), consensus_test.MeanGlobal, order=3)
+#sns.regplot(pred_test_expec.sum(-1), consensus_test.MeanGlobal, order=3)
 
+np.abs(consensus_test.MeanGlobal - target_test.sum(-1)).mean()
 
-sns.regplot(target_test.sum(-1), consensus_test.MeanGlobal, order=3, label='shift doctor', ax= axes[0])
-axes[0].plot([0,16], [0,16], 'k:')
+np.abs(consensus_test.MeanGlobal - pred_test_max.sum(-1)).mean()
 
-sns.regplot(pred_test_max.sum(-1), consensus_test.MeanGlobal, order=3, label='argmax pred.', ax= axes[1])
-axes[1].plot([0,16], [0,16], 'k:')
+np.abs(consensus_test.MeanGlobal - pred_test_expec.sum(-1)).mean()
 
-sns.regplot(pred_test_expec.sum(-1), consensus_test.MeanGlobal, order=3, label='expectation pred.', ax= axes[2])
-plt.xlabel('prediction')
-axes[2].plot([0,16], [0,16], 'k:')
-#plt.legend()
-# -
-
-# ### Consensus vs. 
-
-# #### shift
-
-print(np.abs(consensus_test.MeanGlobal - target_test.sum(-1)).mean())
-print(np.sqrt(((consensus_test.MeanGlobal - target_test.sum(-1))**2).mean()))
-
-# #### argmax prediction
-
-print(np.abs(consensus_test.MeanGlobal - pred_test_max.sum(-1)).mean())
-print(np.sqrt(((consensus_test.MeanGlobal - pred_test_max.sum(-1))**2).mean()))
-
-# #### expectation prediction
-
-print(np.abs(consensus_test.MeanGlobal - pred_test_expec.sum(-1)).mean())
-print(np.sqrt(((consensus_test.MeanGlobal - pred_test_expec.sum(-1))**2).mean()))
-
-
-
-
-
-
-
-
-
-
+target_test

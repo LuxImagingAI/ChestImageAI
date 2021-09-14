@@ -227,12 +227,16 @@ class maskedBCE():
         self.pos_weight = torch.tensor(pos_weight).to(device) if pos_weight is not None else None
     
     def __call__(self, x, y):
-                
+        
         mask = y>=0
         if self.train_cols is not None:
             mask *= self.train_cols
+        if self.pos_weight is not None:
+            mask = mask.double()
+            mask += (y>0.5).double()*(self.pos_weight-1)
         if mask.sum()>0:
-            loss = torch.nn.functional.binary_cross_entropy_with_logits(x[mask], y[mask], reduction='sum')
+            loss = torch.nn.functional.binary_cross_entropy_with_logits(x, y, reduction='none')
+            loss = (loss*mask).sum()
         else:
             loss = torch.tensor(0).to(y.device)
 

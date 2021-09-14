@@ -50,16 +50,16 @@ p.model_dict =  dict(
     architecture = 'BiT-M-R50x3',
     #architecture = 'densenet121',
     num_classes = 1,
-    #pretrained = 'imagenet', 
-    pretrained = '/home/users/jsoelter/models/chexpert/fullmeta_503_consolidation_new/step00200.pt', #None, #'imagenet','imagenet', #
+    pretrained = 'imagenet', 
+    #pretrained = '/home/users/jsoelter/models/chexpert/fullmeta_503_consolidation_new/step00200.pt', #None, #'imagenet','imagenet', #
     fresh_head_weights = True,
     num_meta=0
 )
 
 # +
 p.computation = {
-    'model_out': '/home/users/jsoelter/models/rsna/bitm/new_exp/test',
-    'device': "cuda:3"
+    'model_out': '/home/users/jsoelter/models/rsna/densenet/test3',
+    'device': "cuda:0"
 }
 
 if not os.path.exists(p.computation['model_out']):
@@ -122,20 +122,20 @@ p.data_setup = dict(
         }),
         ('ToTensor', {}),
         ('Normalize', {
-            #'mean': [0.485, 0.456, 0.406], 
-            'mean': (0.5, 0.5, 0.5),
-            #'std': [0.229, 0.224, 0.225]  
-            'std': (0.5, 0.5, 0.5)
+            'mean': [0.485, 0.456, 0.406], 
+            #'mean': (0.5, 0.5, 0.5),
+            'std': [0.229, 0.224, 0.225]  
+            #'std': (0.5, 0.5, 0.5)
         }),
 ])
 
 p.sampling_config = dict(
-    meta_field = 'Sex',
-    meta_values = ['M', 'F'],
-    frac_meta0 = 0.5,
-    frac_meta0_tar1 = 0,
-    frac_meta1_tar1 = 0.5,
-    max_samples = 15000
+    #meta_field = 'Sex',
+    #meta_values = ['M', 'F'],
+    #frac_meta0 = 0.5,
+    #frac_meta0_tar1 = 0.3,
+    #frac_meta1_tar1 = 0.3,
+    #max_samples = 15000
 )
 
 sampling_config2 = p.sampling_config.copy()
@@ -150,7 +150,7 @@ preprocess = data_loader.transform_pipeline_from_dict(p.data_setup['transforms']
 
 train_data = data_loader.RSNAPneumoniaData(
     transform=preprocess, 
-    sub_sampling=p.sampling_config, 
+    #sub_sampling=p.sampling_config, 
     validation=False, 
     datapath = '/work/projects/covid19_dv/raw_data/rsna_pneunomia/',                                       
     **p.data_setup['data']
@@ -158,21 +158,21 @@ train_data = data_loader.RSNAPneumoniaData(
 
 valid_data = data_loader.RSNAPneumoniaData(
     transform=preprocess,
-    sub_sampling=p.sampling_config,
+    #sub_sampling=p.sampling_config,
     validation=True, 
     datapath = '/work/projects/covid19_dv/raw_data/rsna_pneunomia/',                                       
     **p.data_setup['data'])
 
 valid_data2 = data_loader.RSNAPneumoniaData(
     transform=preprocess,
-    sub_sampling=p.sampling_config2,
+    #sub_sampling=p.sampling_config2,
     validation=True, 
     datapath = '/work/projects/covid19_dv/raw_data/rsna_pneunomia/',                                       
     **p.data_setup['data'])
 
 # +
-real_batch_size = 128 #
-batch_split = 8 #number of forward pathes before optimization is performed 
+real_batch_size = 64 #
+batch_split = 4 #number of forward pathes before optimization is performed 
 
 train_loader = torch.utils.data.DataLoader(train_data, batch_size=int(real_batch_size/batch_split), num_workers=8, shuffle=True, drop_last=False)
 valid_loader = torch.utils.data.DataLoader(valid_data, batch_size=16, num_workers=8)
@@ -309,5 +309,7 @@ torch.save({
     os.path.join(p.computation['model_out'], f'step{step:05d}.pt')
 )
 json.dump(ledger, open(os.path.join(p.computation['model_out'], 'train_ledger.json'), 'w'))
+
+
 
 

@@ -171,6 +171,8 @@ class BrixiaScore(torch.nn.Module):
         
         super().__init__()
         
+        assert len(encoder_channels) == 1, 'Can only connect on laye to head' 
+        encoder_channels = encoder_channels[0]
         self.pool = RegionalAttentionPooling(in_channel=encoder_channels, n_heads=n_heads)
         self.cls = torch.nn.Linear(encoder_channels, num_classes)
 
@@ -257,7 +259,7 @@ class MultiHeadEvaluator():
         with torch.no_grad():
             loss_values = defaultdict(list)
             for k, v in heads.items():
-                f = v['features']
+                #f = v['features']
                 m = v['model']
                 m.eval()
                 backbone.eval()
@@ -265,7 +267,7 @@ class MultiHeadEvaluator():
                     x = batch[v['input']].float().to(self.device)
                     y = batch[v['target']].long().to(self.device)
                     _ = backbone(x)
-                    pred = m(list(f.get_features().values()))
+                    pred = m()
                     loss = self.losses[k](pred, y)
                     loss_values[k].append(loss.cpu().numpy())
                     if i == num_iter-1:
@@ -278,8 +280,8 @@ class MultiHeadEvaluator():
 
         with torch.no_grad():
 
-            f = head['features']
-            m = head['model']
+            #f = head['features']
+            m = head['model'].head
             m.eval()
             backbone.eval()
             preds, targets = [], []
@@ -287,7 +289,7 @@ class MultiHeadEvaluator():
                 x = batch[head['input']].float().to(device)
                 y = batch[head['target']]
                 _ = backbone(x)
-                pred = m(list(f.get_features().values()))
+                pred = m()
                 preds.append(pred.to('cpu').numpy())
                 targets.append(y)
 

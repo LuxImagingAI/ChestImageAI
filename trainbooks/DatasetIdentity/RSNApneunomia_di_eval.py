@@ -35,20 +35,69 @@ import scipy.special
 import sklearn.metrics as skm
 # -
 
-1+1
+
 
 # +
 import sys
-sys.path.append('/home/users/jsoelter/Code/ChestImageAI/utils/')
-sys.path.append('/home/users/jsoelter/Code/big_transfer/')
+sys.path.append('../../utils/')
+sys.path.append('../../../big_transfer/')
 
 import data_loader, evaluations, model_setup, sacred
+
+
 # -
+
+def smooth(y, box_pts):
+    box = np.ones(box_pts)/box_pts
+    y_smooth = np.convolve(y, box, mode='same')
+    return y_smooth
+
 
 # ### Model Setup
 
+# +
+dirname = ''
+models = [
+    #'test7',
+    #'small/equal',
+    #'small/equal_more'
+    '/work/projects/covid19_dv/models/dataset_identity/jan/new_tiny_equal/',
+    '/work/projects/covid19_dv/models/dataset_identity/jan/new_tiny_pure/',
+    '/work/projects/covid19_dv/models/dataset_identity/jan/new_tiny_mucho/'
+
+]
+
+fig = plt.figure(figsize=(20,10))
+for model in models:
+
+    ledger = json.load(open(os.path.join(dirname, model, 'train_ledger.json')))
+    
+    plt.subplot(221)
+    plt.title('Validation AUC data_base')
+    plt.plot(np.array(ledger['val_auc']).T[0], np.array(ledger['val_auc']).T[1], '-', label=ledger['train_setup']['0']['setup']['subsample'])
+    #plt.plot(np.array(ledger['val_auc']).T[0], np.array(ledger['val_auc']).T[2], '-', label='val')
+    plt.ylim([0.85, 0.9])
+    plt.xlim([0, 1000])
+    plt.grid()
+    #plt.title(ledger['train_setup']['0']['setup']['subsample'])
+    plt.legend(loc = 'lower left')
+    
+    plt.subplot(222)
+    plt.plot(smooth(ledger['train_loss'], 41))
+    plt.title('Train Loss')
+    plt.grid()
+    
+    plt.subplot(223)
+    plt.plot(np.array(ledger['val_auc']).T[0], np.array(ledger['val_auc']).T[2], '-', label=ledger['train_setup']['0']['setup']['subsample'])
+    plt.ylim([0.7, 0.9])
+    plt.xlim([0, 1000])
+    plt.grid()
+    plt.title('Validation AUC data_enrich')
+    #plt.title(ledger['train_setup']['0']['setup']['subsample'])
+    plt.legend(loc = 'lower left')
+
 # + tags=["parameters"]
-model_checkpoint = '/work/projects/covid19_dv/models/dataset_identity/jan/test5/step01000.pt'
+model_checkpoint = '/work/projects/covid19_dv/models/dataset_identity/jan/test7/step00500.pt'
 
 #model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/mixed_15000_1_5_it1/step00464.pt'
 #model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/test2/step00464.pt'
@@ -69,12 +118,7 @@ model = model.to(device)
 
 ledger['train_setup']['0'].keys()
 
-plt.plot(np.array(ledger['val_auc']).T[0], np.array(ledger['val_auc']).T[1], '-', label='val')
-plt.plot(np.array(ledger['val_auc']).T[0], np.array(ledger['val_auc']).T[2], '-', label='val')
-plt.ylim([0.7, 0.92])
-plt.xlim([0, 1000])
-plt.grid()
-plt.title(ledger['train_setup']['0']['setup']['subsample'])
+
 
 # +
 fig = plt.figure(figsize=(20,8)) 

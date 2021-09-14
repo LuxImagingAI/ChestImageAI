@@ -14,7 +14,9 @@
 # ---
 
 # +
-import os, glob, json, copy
+import os, glob, copy
+import json_tricks as json
+
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -67,10 +69,12 @@ device = torch.device("cuda:0")
 # #### Pretrained model
 
 # +
-p_pretrain.model_dict['pretrained'] = model_checkpoint
-p_pretrain.model_dict['fresh_head_weights'] = False
+p.model_dict = copy.deepcopy(p_pretrain.model_dict)
 
-model = model_setup.instantiate_model(**p_pretrain.model_dict)
+p.model_dict['pretrained'] = model_checkpoint
+p.model_dict['fresh_head_weights'] = False
+
+model = model_setup.instantiate_model(**p.model_dict)
 model = model.to(device)
 # -
 
@@ -93,7 +97,7 @@ _ = deconfounder.to(device)
 
 # +
 p.computation = {
-    'model_out': '/home/users/jsoelter/models/rsna/bitm/new_exp/deconf_test',
+    'model_out': '/home/users/jsoelter/models/rsna/bitm/new_exp/deconf_test2',
 }
 
 if not os.path.exists(p.computation['model_out']):
@@ -384,6 +388,9 @@ def train_step(model, deconfounder, data_iter, optimizer, batch_acc=1, alpha=0.5
         (loss_full/batch_acc).backward()
 
     optimizer.step()
+    losses = np.array([float(loss_pred.data.cpu().numpy()), float(loss_conf.data.cpu().numpy())])
+    
+    return losses
 
 
 # +
@@ -397,73 +404,105 @@ p.opt_deconf = {
 }
 
 optim_pred = getattr(torch.optim, p.opt_deconf['class'])(model.parameters(), **p.opt_deconf['param'])
+
+
 # -
 
-batch_acc = 4
-alpha = 0.5
+def create_checkpoint():
+
+    torch.save({
+            "step": step,
+            "backbone": model.state_dict(),
+            "deconf_head": deconfounder.head.state_dict(),
+            "optim_model": optim_pred.state_dict(),
+            "optim_conf" : optim_conf.state_dict(),
+        }, 
+        os.path.join(p.computation['model_out'], f'step{step:05d}.pt')
+    )
+    json.dump(ledger, open(os.path.join(p.computation['model_out'], 'train_ledger.json'), 'w'))
+    print(f'saved at step {step}')
+
 
 # +
 max_steps = 100
-modulo = 1
+save_intervall = 5
+eval_intervall = 1
 
-step = 0
+
+train_steps_target = 50
+train_steps_confounder= 200
+batch_acc = 1
+loss_alpha = 0.5
+
+p.train_loop = dict(
+    train_steps_target = train_steps_target,
+    train_steps_confounder = train_steps_confounder,
+    batch_acc = batch_acc,
+    loss_alpha = loss_alpha
+)
 
 train_setup = ledger.setdefault('train_setup', {})
 train_setup[step] = {
-    'setup': p.params,
+    'setup': p.params
 }
+
+# save initial model (to better compare improvements)
+create_checkpoint()
 
 _ = model.train()
 while step < max_steps:
-    
-    step += 1
-    
+        
     # train target + deconfounding
-    for i in range(50):
-        train_step(model, deconfounder, train_iter, optim_pred, batch_acc = batch_acc, alpha=alpha)
-    
-    if steps % modulo == 0:
+    losses = np.zeros(2)
+    for i in range(train_steps_target):
+        losses += train_step(model, deconfounder, train_iter, optim_pred, batch_acc = batch_acc, alpha = loss_alpha)
+    ledger['train_losses_targets'].append(losses/train_steps_target)
+        
+    if (step % eval_intervall) == 0:
+        print(f'======== {step} =========')
+
         preds, targets, meta = batch_prediction(deconfounder, test_loader, device=device)    
-        print(f'AUC M vs F: {skm.roc_auc_score(meta>0, preds.reshape(-1, 1)):.3f}')
-        preds, targets, meta = batch_prediction(model, test_loader, device=device)    
-        print(f'AUC ext.: {skm.roc_auc_score(targets, preds.reshape(-1, 1)):.3f}')
+        score = skm.roc_auc_score(meta>0, preds.reshape(-1, 1))
+        ledger['auc_val_deconf'].append((step, score))
+        print(f'AUC M vs F: {score:.3f}')
+        
+        preds, targets, meta = batch_prediction(model, test_loader, device=device)
+        score = skm.roc_auc_score(targets, preds.reshape(-1, 1))
+        ledger['auc_val_tar_ext'].append(step, score)
+        print(f'AUC ext.: {score:.3f}')
+        
         preds, targets, _ = batch_prediction(model, valid_loader, device=device)
-        print(f'AUC int.: {skm.roc_auc_score(targets, preds.reshape(-1, 1)):.3f}')
+        score = skm.roc_auc_score(targets, preds.reshape(-1, 1))
+        ledger['auc_val_tar_int'].append(step, score)
+        print(f'AUC int.: {score:.3f}')
+
     
     # train confounder head
-    for i in range(200):    
-        train_step_confounder_head(deconfounder, train_y0_iter, optim_conf)
+    loss = 0
+    for i in range(train_steps_confounder):    
+        loss += train_step_confounder_head(deconfounder, train_y0_iter, optim_conf)
+    ledger['train_loss_conf'].append(loss/train_steps_confounder)
 
-    if steps % modulo == 0:
-        preds, targets, meta = batch_prediction(deconfounder, test_loader, device=device)    
-        print(f'AUC M vs F: {skm.roc_auc_score(meta>0, preds.reshape(-1, 1)):.3f}')
-        print('===================')
-# -
-
-
-
+        
+    if (step % eval_intervall) == 0:
+        preds, targets, meta = batch_prediction(deconfounder, test_loader, device=device)
+        score = skm.roc_auc_score(meta>0, preds.reshape(-1, 1))
+        ledger['auc_val_conf'].append((step, score))
+        print(f'AUC M vs F: {score:.3f}')
+        
+    
+    if (step % save_intervall) == 0:
+        create_checkpoint()
+        
+    step += 1
 
 
 # +
 #torch.cat((a,t[2].unsqueeze(2).unsqueeze(3).to('cuda')), 1).shape
 # -
 
-torch.save({
-        "step": steps,
-        "backbone": model.state_dict(),
-        "deconf_head": deconfounder.head.state_dict(),
-        "optim_model": optim_pred.state_dict(),
-        "optim_conf" : optim_conf.state_dict(),
-    }, 
-    os.path.join(p.computation['model_out'], f'step{step:05d}.pt')
-)
-json.dump(ledger, open(os.path.join(p.computation['model_out'], 'train_ledger.json'), 'w'))
+create_checkpoint()
 
-preds, targets, meta = batch_prediction(deconfounder, test_loader, device=device)    
-print(f'AUC M vs F: {skm.roc_auc_score(meta>0, preds.reshape(-1, 1)):.3f}')
-preds, targets, meta = batch_prediction(model, test_loader, device=device)    
-print(f'AUC ext.: {skm.roc_auc_score(targets, preds.reshape(-1, 1)):.3f}')
-preds, targets, _ = batch_prediction(model, valid_loader, device=device)
-print(f'AUC int.: {skm.roc_auc_score(targets, preds.reshape(-1, 1)):.3f}')
+
 
 

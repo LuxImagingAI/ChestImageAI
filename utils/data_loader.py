@@ -20,23 +20,27 @@ class ChexpertData(Dataset):
     
     def __init__(self,
             meta_csv, # file to load
-            datapath = '/work/projects/covid19_dv/heavy_datasets/chexpert_stanford/',
+            datapath = '/work/projects/covid19_dv/raw_data/heavy_datasets/chexpert_stanford/',
             subset = {}, # Define subsetting of data
             labels = ['Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 'Lung Lesion', 
                       'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 'Pneumothorax', 
                       'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'],
             include_meta = [], # meta-data to include in targets
+            include_meta_features  = [],
             label_value_map = {
                 'nan': 0.,
                 -1: 0.5,
             },
             fill_hierachy = {}, 
             transform = None,
-            equalize = 'hist'
+            equalize = 'hist',
+            val_conf={},
+            validation=False
         ):
                 
         self.labels = labels
         self.transform = transform
+        self.include_meta_features = include_meta_features
         self.equalize = True
         
         meta_df = pd.read_csv(os.path.join(datapath, meta_csv))
@@ -53,6 +57,7 @@ class ChexpertData(Dataset):
         meta_df.Sex = meta_df.Sex.map({'Male': 0, 'Female': 1}).fillna(-1)
         meta_df['AP/PA'] = meta_df['AP/PA'].map({'AP': 0, 'PA': 1}).fillna(-1)
         meta_df['Frontal/Lateral'] =  meta_df['Frontal/Lateral'].map({'Frontal': 0, 'Lateral':1}).fillna(-1)
+        meta_df['patientid'] = meta_df.Path.apply(lambda x: x.split('/')[-3])
         
         # mapping of labels
         for l in labels:
@@ -61,13 +66,19 @@ class ChexpertData(Dataset):
                     m = meta_df[l] == k
                     meta_df.loc[m, l] = v
             meta_df[l].fillna(label_value_map['nan'], inplace=True)
+            
+        # Train-Validation Split
+        if val_conf:
+            meta_df['val'] = meta_df.patientid.apply(lambda x: hash_sample(val_conf['salt'] + x, val_conf['fraction']))
+            meta_df = meta_df[meta_df.val] if validation else meta_df[np.logical_not(meta_df.val)]
         
         # propagate hierachical labels
         for k, v_list in fill_hierachy.items():
             for v in v_list:
                 less = meta_df[k] < meta_df[v]
-                meta_df.loc[less, k] = meta_df.loc[less, v] 
-        self.meta_df = meta_df
+                meta_df.loc[less, k] = meta_df.loc[less, v]
+                
+        self.meta_df = meta_df.reset_index().drop(columns=['index'])
         self.targets = labels + include_meta
                     
         
@@ -76,6 +87,12 @@ class ChexpertData(Dataset):
         labels = self.meta_df.iloc[ix][self.targets]
         image = cv2.imread(self.meta_df.iloc[ix].Path, cv2.IMREAD_GRAYSCALE)
         
+        if self.include_meta_features:
+            meta_features = self.meta_df.loc[ix, self.include_meta_features].to_list()
+            meta_features = np.array(meta_features).astype('float32')
+        else:
+            meta_features = np.array(np.nan).astype('float32')
+        
         if self.equalize == 'hist':
             image = cv2.equalizeHist(image)
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
@@ -83,7 +100,7 @@ class ChexpertData(Dataset):
         if self.transform:
             image = self.transform(image)
         
-        return image, labels.values.astype('double')
+        return image, labels.values.astype('double'), meta_features
     
     def __len__(self):
         return len(self.meta_df)
@@ -105,15 +122,16 @@ class BIMCVPneumoniaData(Dataset):
                 'salt': '42',
                 'fraction': 0.05,
             },
-            validation = False
+            meta_mapping = {
+                'Sex': {'M': -1, 'F': 1},
+                'AP/PA': {'vp-ap': 0, 'vp-pa': 1}
+            },
+            validation = False,
+                
         ):
         
         self.meta_fields = {}
-        
-        self.meta_mapping = {
-            'Sex': {'M': -1, 'F': 1},
-            'AP/PA': {'vp-ap': 0, 'vp-pa': 1}
-        }
+        self.meta_mapping = meta_mapping
         self.transform = transform
         self.equalize = equalize
         
@@ -263,6 +281,10 @@ class RSNAPneumoniaData(Dataset):
             subset = {}, # Define subsetting of data
             sub_sampling = {},
             include_meta = [], # meta-data to include in targets
+            meta_mapping = {
+                'Sex': {'M': -1, 'F': 1},
+                'AP/PA': {'AP': 0, 'PA': 1}
+            },
             include_meta_features  = [],
             transform = None,
             equalize = 'hist_cv',
@@ -275,10 +297,7 @@ class RSNAPneumoniaData(Dataset):
         ):
         
         self.meta_fields = {}
-        self.meta_mapping = {
-            'Sex': {'M': -1, 'F': 1},
-            'AP/PA': {'AP': 0, 'PA': 1}
-        }
+        self.meta_mapping = meta_mapping
         self.transform = transform
         self.equalize = equalize
         
@@ -319,7 +338,6 @@ class RSNAPneumoniaData(Dataset):
     
     def __getitem__(self, ix):
         
-        dcm = pydicom.dcmread(self.meta_df.loc[ix].Path)
         
         labels = self.meta_df.loc[ix, ['Target'] + self.include_meta].to_list()
         labels = np.array(labels).astype('float32')
@@ -329,7 +347,8 @@ class RSNAPneumoniaData(Dataset):
             meta_features = np.array(meta_features).astype('float32')
         else:
             meta_features = np.array(np.nan).astype('float32')
-            
+
+        dcm = pydicom.dcmread(self.meta_df.loc[ix].Path)
         image = dcm.pixel_array
         if self.equalize == 'hist_cv':
             image = equalize_cv(image, dcm.BitsStored, dcm.PhotometricInterpretation)

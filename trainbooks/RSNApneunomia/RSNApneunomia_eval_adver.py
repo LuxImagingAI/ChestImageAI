@@ -14,7 +14,8 @@
 # ---
 
 # +
-import os, glob, json
+import os, glob
+import json_tricks as json
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -33,9 +34,6 @@ from scipy.special import expit
 
 import scipy.special
 import sklearn.metrics as skm
-# -
-
-1+1
 
 # +
 import sys
@@ -43,54 +41,53 @@ sys.path.append('/home/users/jsoelter/Code/ChestImageAI/utils/')
 sys.path.append('/home/users/jsoelter/Code/big_transfer/')
 
 import data_loader, evaluations, model_setup, sacred
+import multi_head_modules as multihead
 # -
 
 # ### Model Setup
 
 # + tags=["parameters"]
-model_checkpoint = '/work/projects/covid19_dv/models/dataset_identity/jan/test5/step01000.pt'
-
-#model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/mixed_15000_1_5_it1/step00464.pt'
+model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/deconf_test2/step00000.pt'
 #model_checkpoint = '/home/users/jsoelter/models/rsna/bitm/new_exp/test2/step00464.pt'
+# -
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# +
 dirname = os.path.dirname(model_checkpoint)
 ledger = json.load(open(os.path.join(dirname, 'train_ledger.json')))
+checkpoint = torch.load(model_checkpoint, map_location='cpu')
 
-model_dict = ledger['train_setup']['0']['setup']['model_dict'].copy()
-model_dict['pretrained'] = model_checkpoint
-model_dict['fresh_head_weights'] = False
-# -
+p = sacred.ParameterStore(defaults=ledger['train_setup']['0']['setup'])
 
-model = model_setup.instantiate_model(**model_dict)
-model = model.to(device)
-
-ledger['train_setup']['0'].keys()
-
-plt.plot(np.array(ledger['val_auc']).T[0], np.array(ledger['val_auc']).T[1], '-', label='val')
-plt.plot(np.array(ledger['val_auc']).T[0], np.array(ledger['val_auc']).T[2], '-', label='val')
-plt.ylim([0.7, 0.92])
-plt.xlim([0, 1000])
-plt.grid()
-plt.title(ledger['train_setup']['0']['setup']['subsample'])
+backbone_config = '/home/users/jsoelter/models/rsna/bitm/new_exp/mixed_15000_1_5_it1/'
+model_dict = json.load(open(os.path.join(backbone_config, 'train_ledger.json')))['train_setup']['0']['setup']['model_dict']
+p.model_dict = model_dict
 
 # +
-fig = plt.figure(figsize=(20,8)) 
-gs = matplotlib.gridspec.GridSpec(3,1,height_ratios=(1,4,4), hspace=0)
+model = model_setup.instantiate_model(**p.model_dict)
+model.load_state_dict(checkpoint['backbone'])
+model = model.to(device)
+
+feature_extractor = multihead.FeatureExtractor(backbone=model)
+deconfounder = multihead.AttachedHead(feature_extractor, p.deconfounder_head)
+deconfounder.head.load_state_dict(checkpoint['deconf_head'])
+_ = deconfounder.to(device)
+
+# +
+fig = plt.figure(figsize=(20,14)) 
+gs = matplotlib.gridspec.GridSpec(4,1,height_ratios=(1,4,4,4), hspace=0)
 
 ax = plt.subplot(gs[0])
-plt.plot(ledger['lr'], 'k')
+#plt.plot(ledger['lr'], 'k')
 plt.xticks([])
 plt.ylabel('lr')
 plt.yscale('log')
 #plt.xlim([0, 10000])
 
 ax = plt.subplot(gs[1])
-plt.plot(ledger['train_loss'], alpha=0.1) #, np.hstack([np.zeros(99), np.ones(100)/100]), mode = 'same'))
-plt.plot(np.convolve(ledger['train_loss'], np.hstack([np.zeros(9), np.ones(10)/10]), mode = 'same'), color='b', label='train')
-plt.plot(*np.array(ledger['internal']).T, '-', label='val')
+plt.plot(ledger['train_losses_targets'], alpha=0.75, label=('target', 'conf')) #, np.hstack([np.zeros(99), np.ones(100)/100]), mode = 'same'))
+#plt.plot(np.convolve(ledger['train_losses_targets'], np.hstack([np.zeros(9), np.ones(10)/10]), mode = 'same'), color='b', label='train')
+#plt.plot(*np.array(ledger['internal']).T, '-', label='val')
 #plt.yscale('log')
 plt.legend()
 plt.grid()
@@ -98,11 +95,19 @@ plt.grid()
 plt.ylabel('cross entropy')
 #plt.xticks([])
 plt.ylim([0.1,0.8])
+
+ax = plt.subplot(gs[2])
+plt.plot(*np.array(ledger['auc_val_deconf']).T, label='val_deconf')
+plt.plot(*np.array(ledger['auc_val_conf']).T, label='val_conf')
+plt.grid()
+plt.legend()
+
+ax = plt.subplot(gs[3])
+plt.plot(*np.array(ledger['auc_val_tar_ext']).T, label='tar_ext')
+plt.plot(*np.array(ledger['auc_val_tar_int']).T, label='tar_int')
+plt.grid()
+plt.legend()
 # -
-
-
-
-
 
 # ### Data Setup
 
@@ -143,36 +148,115 @@ valid_loader = torch.utils.data.DataLoader(valid_data, **computational_setup)
 valid_loader2 = torch.utils.data.DataLoader(valid_data2, **computational_setup)
 
 
+
+
+
 # ## Benchmark
 
-def batch_prediction(model, loader, max_batch=-1, tta_ensemble = 1, device=None, overwrite=None):
+def batch_prediction(head, loader, max_batch=-1, tta_ensemble = 1, device=None):
     
-    model.eval()
+    head.eval()
     device = device or torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    ensemble, targets = [], []
+    ensemble, targets, meta = [], [], []
     for i in range(tta_ensemble):
-        preds, targs = [], []
+        preds, targs, metas = [], [], []
         with torch.no_grad():
             for i, (x, t, m) in enumerate(loader):
-                x, t = x.to(device), t.numpy()
-                if getattr(model, 'meta_injection', None):
-                    if overwrite is not None:
-                        m = torch.ones_like(m)*overwrite
-                    m = m.to(device)
-                    logits = model(x, m)
-                else:
-                    logits = model(x)
+                x, m = x.to(device), m.numpy()
+                logits = head(x)
                 preds.append(logits.to('cpu').numpy())
+                meta.append(m)
                 targs.append(t)
                 if i == max_batch:
                     break
 
         ensemble.append(np.vstack(preds))
         targets.append(np.vstack(targs))
+        metas.append(np.vstack(meta))
+   
+    return np.array(ensemble).squeeze(), targets[0], metas[0]
+
+
+
+def feature_extraction(head, loader, max_batch=-1, device=None):
     
-    assert np.all(targets[0] == np.array(targets).mean(axis=0)), 'Targets across the ensemble do not match'
-    
-    return np.array(ensemble).squeeze(), targets[0]
+    head.eval()
+    device = device or torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    preds, conf, targs, metas, feat = [], [], [], [], []
+    with torch.no_grad():
+        for i, (x, t, m) in enumerate(loader):
+            x, m = x.to(device), m.numpy()
+            preds.append(head.feature_extractor.backbone(x).to('cpu').numpy())
+            conf.append(head().to('cpu').numpy())
+            metas.append(m)
+            targs.append(t)
+            feat.append(head.feature_extractor.get_features()[head.link_layers[0]].to('cpu').numpy())
+            if i == max_batch:
+                break
+
+    return np.vstack(preds).squeeze(), np.vstack(conf).squeeze(), np.vstack(targs).squeeze(), np.vstack(metas).squeeze(), np.vstack(feat).squeeze()
+
+
+
+import umap
+import umap.plot
+#import plotly.express as px
+
+
+
+# +
+pred, conf, tar, meta, feat = feature_extraction(deconfounder, train_loader, max_batch=100, device='cuda:0')
+print(f'AUC.: {skm.roc_auc_score(tar, pred):.3f}')
+
+umap_2d = umap.UMAP(n_components=2, init='random', n_neighbors=50, random_state=0)
+mapper = umap_2d.fit(feat)
+
+plt.figure(figsize=(20,7))
+
+ax = plt.subplot(1,3,1)
+umap.plot.points(mapper, labels=tar,  theme='viridis', ax=ax)
+plt.title('targets')
+
+ax = plt.subplot(1,3,2)
+umap.plot.points(mapper, values=pred,  theme='viridis', ax=ax)
+plt.title('pred')
+
+ax = plt.subplot(1,3,3)
+umap.plot.points(mapper, values=meta,  theme='viridis', ax=ax)
+plt.title('meta')
+
+# +
+pred, conf, tar, meta, feat = feature_extraction(deconfounder, valid_loader2, max_batch=100, device='cuda:0')
+print(f'AUC.: {skm.roc_auc_score(tar, pred):.3f}')
+
+umap_2d = umap.UMAP(n_components=2, init='random',  n_neighbors=50, random_state=0)
+mapper = umap_2d.fit(feat)
+
+plt.figure(figsize=(20,7))
+
+ax = plt.subplot(1,3,1)
+umap.plot.points(mapper, labels=tar,  theme='viridis', ax=ax)
+plt.title('targets')
+
+ax = plt.subplot(1,3,2)
+umap.plot.points(mapper, values=pred,  theme='viridis', ax=ax)
+plt.title('pred')
+
+ax = plt.subplot(1,3,3)
+umap.plot.points(mapper, values=meta,  theme='viridis', ax=ax)
+plt.title('meta')
+# -
+
+pred.shape
+
+fig_2d = px.scatter(
+    proj_2d, x=0, y=1,
+    #color=df.species, 
+    #labels={'color': 'species'}
+)
+
+# %matplotlib inline
+fig_2d.show()
 
 
 def tta_predict(model, loader, data, tta_iter=1, overwrite=None):
